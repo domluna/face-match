@@ -5,6 +5,57 @@ import sqlite3
 import sqlite_vec
 import struct
 from typing import List
+import torch
+from ultralytics import YOLO
+from torchvision import transforms
+
+
+dinov2_vits14 = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14")
+dinov2_vits14 = dinov2_vits14.eval()
+model = YOLO("/Users/lunaticd/Downloads/yolov8n-face.pt")
+# model = model.to("mps")
+#
+
+transform = transforms.Compose(
+    [
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ]
+)
+# transform(img).unsqueeze(dim=0)
+# out = dinov2_vits14(inp).reshape(-1)
+# out /= out.norm(dim=-1, keepdim=True)
+# ret = out.detach().numpy()
+
+
+def detect_faces(img, confidence=0.4):
+    resp = []
+
+    # Detect faces
+    results = model.predict(img, verbose=False, show=False, conf=confidence)[0]
+
+    # For each face, extract the bounding box, the landmarks and confidence
+    for result in results:
+        if result.boxes is None or result.keypoints is None:
+            continue
+
+        # Extract the bounding box and the confidence
+        x, y, w, h = result.boxes.xywh.tolist()[0]
+        confidence = result.boxes.conf.tolist()[0]
+
+        x, y, w, h = int(x - w / 2), int(y - h / 2), int(w), int(h)
+        facial_area = dict(
+            x=x,
+            y=y,
+            w=w,
+            h=h,
+            confidence=confidence,
+        )
+        resp.append(facial_area)
+
+    return resp
 
 
 def serialize_f32(vector: List[float]) -> bytes:
@@ -84,16 +135,18 @@ def extract_faces_from_video(
         timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
 
         # Detect faces in the frame
-        results = DeepFace.represent(
-            frame,
-            detector_backend="yolov8",
-            model_name=model_name,
-            enforce_detection=False,
-        )
+        # results = DeepFace.represent(
+        #     frame,
+        #     detector_backend="yolov8",
+        #     model_name=model_name,
+        #     enforce_detection=False,
+        # )
+        results = detect_faces(frame)
 
         for r in results:
-            embedding = r["embedding"]
-            facial_area = r["facial_area"]
+            # embedding = r["embedding"]
+            # facial_area = r["facial_area"]
+            facial_area = r
 
             # Draw rectangle around the face
             x, y, w, h = (
@@ -104,10 +157,9 @@ def extract_faces_from_video(
             )
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # get best result
-            found = db.find_closest_cast_member(embedding)
-            if found is not None and found["distance"] < 11.4:
-                print(f"Found cast member {found} at timestmap {timestamp}")
+            # found = db.find_closest_cast_member(embedding)
+            # if found is not None and found["distance"] < 11.4:
+            #     print(f"Found cast member {found} at timestmap {timestamp}")
 
         cv2.imshow("Video", frame)
 
